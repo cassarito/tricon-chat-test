@@ -1,5 +1,30 @@
 <!DOCTYPE html>
 <html>
+<head>
+  <style>
+    body {
+      /* Method 1: If your image is in the same folder as the HTML file */
+      background-image: url('nlx.png');
+      
+      /* Method 2: If your image is in a subfolder */
+      /* background-image: url('images/your-image.png'); */
+      
+      /* Method 3: If you're using an online image URL */
+      /* background-image: url('https://example.com/path/to/your-image.png'); */
+      
+      /* Background styling options */
+      background-size: cover;        /* Scales image to cover entire page */
+      background-repeat: no-repeat;  /* Prevents image from repeating */
+      background-position: center;   /* Centers the image */
+      background-attachment: fixed;  /* Keeps background fixed during scroll */
+      
+      /* Optional: Set minimum height to ensure background is visible */
+      min-height: 100vh;
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+</head>
 <body>
   <script defer src="https://unpkg.com/@nlxai/touchpoint-ui/lib/index.umd.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/reconnecting-websocket/1.0.0/reconnecting-websocket.min.js"></script>
