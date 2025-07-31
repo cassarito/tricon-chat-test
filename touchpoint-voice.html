@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <script defer src="https://unpkg.com/@nlxai/touchpoint-ui/lib/index.umd.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/reconnecting-websocket/1.0.0/reconnecting-websocket.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/uuid/8.3.2/uuid.min.js"></script>
+  <script>
+    // Wrap the logic inside an async function to use `await`
+    (async () => {
+      const contentLoaded = () => {
+        if (document.readyState === "loading") {
+          return new Promise((resolve) => {
+            window.addEventListener("DOMContentLoaded", () => {
+              resolve();
+            });
+          });
+        } else {
+          return Promise.resolve();
+        }
+      };
+
+      // Wait for the content to be loaded
+      await contentLoaded();
+
+      // Genesys stuff
+      // Polyfill
+      function _typeof(obj) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (obj) { return typeof obj; } : function (obj) { return obj && "function" == typeof Symbol && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }, _typeof(obj); }
+      function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+      function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor); } }
+      function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
+      function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
+      function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return _typeof(key) === "symbol" ? key : String(key); }
+      function _toPrimitive(input, hint) { if (_typeof(input) !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (_typeof(res) !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); }
+      //instatiate UUID for Genesys Socket
+      var v4 = uuid.v4;
+      //GenesySocket code
+      var GenesysSocket = /*#__PURE__*/function () {
+        function GenesysSocket(url, deploymentId, tracingId, token) {
+          _classCallCheck(this, GenesysSocket);
+          _defineProperty(this, "socket", void 0);
+          _defineProperty(this, "url", void 0);
+          _defineProperty(this, "deploymentId", void 0);
+          _defineProperty(this, "tracingId", void 0);
+          _defineProperty(this, "token", void 0);
+          this.deploymentId = deploymentId;
+          this.url = "".concat(url, "?deploymentId=").concat(deploymentId);
+          this.socket = new ReconnectingWebSocket(this.url);
+          this.tracingId = tracingId;
+          this.token = token;
+        }
+
+        /**
+         * Send text data through the WebSocket with Genesys onMessage format.
+         * @param text - The text to be sent. Should be a string.
+         */
+        _createClass(GenesysSocket, [{
+          key: "sendText",
+          value: function sendText(text) {
+            console.log(`message to send = ${text}`);
+            console.log(`Socket state is ${this.socket.readyState}.`);
+            var messageRequest = {
+              "action": "onMessage",
+              "token": this.token,
+              "tracingId": uuid.v4(),
+              "message": {
+                "type": "Text",
+                "text": text
+              }
+            };
+            this.socket.send(JSON.stringify(messageRequest), [], {
+              debug: true
+            });
+          }
+
+          /**
+           * Close the WebSocket connection.
+           */
+        }, {
+          key: "close",
+          value: function close() {
+            this.socket.close();
+          }
+        }, {
+          key: "getSocket",
+          value: function getSocket() {
+            return this.socket;
+          }
+        }]);
+        return GenesysSocket;
+      }();
+
+      function formatConversationHistory(conversationHistory) {
+        console.log("Formatting history...");
+        var result = '';
+
+        conversationHistory.forEach(entry => {
+            if (entry.type === 'user' && entry.payload.type === 'text') {
+                result += `user: ${entry.payload.text}\n`;
+            } else if (entry.type === 'bot' && entry.payload.messages) {
+                entry.payload.messages.forEach(message => {
+                    result += `bot: ${message.text}\n`;
+                });
+            }
+        });
+
+        return result.trim();
+      }
+
+      function sleep(seconds) {
+        return new Promise(resolve => setTimeout(resolve, seconds * 1000));
+      }
+
+      // Destructure necessary functions from the nlxai library
+      const { html, create, React } = nlxai.touchpointUi;
+
+      const formatPrice = (price) => {
+        if (!price) return "$0.00";
+
+        const formattedPrice = new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).format(parseFloat(price));
+
+        return formattedPrice;
+      }
+
+      const formatNumber = (value) =>
+        new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+
+      var genesys;
+      var genesysMsgCount = 0;
+      var isSessionConfigured = false;
+      var genesysEscalation = false;
+      var currentMessages;
+      var GENESYS_WEBMESSAGING_URL = "wss://webmessaging.usw2.pure.cloud/v1";
+      var GENESYS_MESSENGER_DEPLOYMENT_ID = "39792af2-84d4-4648-a7ba-1e06d0954712";
+
+      var FIRST_ESCALATION_MESSAGE_HEADING = "Sending conversation history to agent"
+      var genesysSocketListenerLock = false;
+      
+      function setupGenesysEscalation(touchpoint) {
+        var convo = touchpoint.conversationHandler;
+
+        function setBorRequestOverwrite() {
+          convo.setBotRequestOverride(function (req, append) {
+              console.log(`configuring BotRequestOverride`);
+              var _req$request$unstruct, _req$request$unstruct2;
+              genesys.sendText((_req$request$unstruct = (_req$request$unstruct2 = req.request.unstructured) === null || _req$request$unstruct2 === void 0 ? void 0 : _req$request$unstruct2.text) !== null && _req$request$unstruct !== void 0 ? _req$request$unstruct : "");
+              // only add Genesys event listener if none previously set
+              if (genesysSocketListenerLock === false) {
+                genesys.getSocket().addEventListener("message", function (genesysResponse) {
+                  // Set listener lock to true to prevent duplicate event listeners
+                  genesysSocketListenerLock = true;
+                  console.log("received message from Genesys", genesysResponse);
+                  var data = JSON.parse(genesysResponse.data);
+                  console.log(data);
+                  console.log(data.body.text && data.body.text.startsWith(FIRST_ESCALATION_MESSAGE_HEADING));
+                  if (data.body.direction === "Outbound" && 
+                      data.body.type === "Text" && 
+                      data.body.text &&
+                      !data.body.text.startsWith(FIRST_ESCALATION_MESSAGE_HEADING)
+                  ) {
+                    append({
+                      messages: [{
+                        text: data.body.text,
+                        choices: []
+                      }]
+                    });
+                    console.log('appending!')
+                  }
+                });
+              }
+            });
+        }
+
+        function sendFirstMessage(event) {
+          console.log(`sendFirstMessage event`, event);
+          const message = JSON.parse(event.data);
+          // Wait for session configuration confirmation
+          console.log(`message`, message);
+          if (message.type === "response" && message.class === "SessionResponse" && message.body.connected && genesysMsgCount === 0) {
+            console.log("genesys session configured");
+            genesysMsgCount += 1;
+            isSessionConfigured = true;
+            // Now it is safe to send messages
+            console.log("currentMessages", currentMessages);
+            genesys.sendText(formatConversationHistory(currentMessages));
+            console.log("genesys message with history sent");
+            // delayedFirstMessage(formatConversationHistory(allMessages));
+            genesysEscalation = true;
+            genesys.getSocket().removeEventListener("message", sendFirstMessage);
+            setBorRequestOverwrite();  
+            convo.sendText(`Agent requested.`);
+          } 
+        }
+
+        async function delayedFirstMessage(text, allMessages) {
+          console.log(text)
+          genesys.sendText(formatConversationHistory(allMessages));
+          console.log(`first message sent`);
+          console.log(`sleep`);
+          await sleep(3);
+          // convo.sendText(`${FIRST_ESCALATION_MESSAGE_HEADING}: \n\n` + text);
+          // genesys.sendText(text);
+        }
+
+        convo.subscribe(function (allMessages, newMessage) {
+          console.log("newMessage=", newMessage)
+          console.log("genesysEscalation=", genesysEscalation)
+
+          currentMessages = allMessages;
+
+          if (!genesysEscalation && newMessage && newMessage.type === "bot" && newMessage.payload && newMessage.payload.metadata && newMessage.payload.metadata.intentId === "AgentEscalation") {
+            genesys = new GenesysSocket(GENESYS_WEBMESSAGING_URL, GENESYS_MESSENGER_DEPLOYMENT_ID, uuid.v4(), convo.currentConversationId());
+            console.log("escalating via Genesys");
+
+            // Event listener for when the connection is opened --- SWITCH THIS UP BELOW THE OVERWRITE
+            genesys.getSocket().addEventListener("open", function () {
+              // Send a message once the WebSocket is open
+              var send = {
+                "action": "configureSession",
+                "deploymentId": GENESYS_MESSENGER_DEPLOYMENT_ID,
+                "token": convo.currentConversationId()
+              };
+              genesys.getSocket().send(JSON.stringify(send), [], {
+                debug: true
+              });
+              console.log("send genesys conection message");
+            });
+
+            // Listen for messages from the server
+            genesys.getSocket().addEventListener("message", sendFirstMessage);
+          }
+        });
+      }
+      const VideoExample = ({ data }) => {
+          const videoSrc = `https://www.youtube.com/embed/-pzauRWebDM`;
+          //const videoSrc = `https://www.youtube.com/embed/${data.url}`;
+          return html`
+            <iframe
+              width=90%
+              height="200"
+              src=${videoSrc}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            ></iframe>`;
+        };
+      const CarouselExample = ({ data, conversationHandler }) => {
+        console.log("react", React);
+        const [selected, setSelected] = React.useState(null);
+        const carousel = html`
+          <Carousel>
+            ${data.map((cardData, cardIndex) => html`
+              <CustomCard
+                key=${cardIndex}
+                selected=${selected === cardIndex}
+                onClick=${() => {
+                  setSelected(cardIndex);
+                  conversationHandler.sendChoice(cardData.id);
+                }}
+              >
+                <CustomCardImageRow
+                  src=${cardData.imageUrl}
+                  alt="Alt Text"
+                />
+                ${cardData.address && html`
+                <CustomCardRow
+                    left=${html`
+                        <BaseText>
+                            <div style=${{ display: 'flex', flexDirection: 'column' }}>
+                                  <div>
+                                    <strong style=${{ fontSize: '1.2em' }}>${formatPrice(cardData.price)}</strong>
+                                    <span style=${{ marginLeft: '4px', color: 'grey', fontSize: '0.9em' }}>
+                                      /month plus fees
+                                    </span>
+                                  </div>
+                                  <span style=${{ color: 'black', fontSize: '0.9em' }}>
+                                    ${cardData.address}
+                                  </span>
+                                </div>
+                            </BaseText>
+                    `}
+                />
+                <CustomCardRow
+                  left=${html`
+                    <BaseText>
+                      <div style=${{ display: 'flex', justifyContent: 'space-between', gap: '24px' }}>
+                        ${[
+                          { icon: 'https://nlx-chatbot-image.s3.us-east-1.amazonaws.com/bed.svg', value: cardData.numBedrooms, label: 'Beds' },
+                          { icon: 'https://nlx-chatbot-image.s3.us-east-1.amazonaws.com/bath.svg', value: cardData.numFullBaths, label: 'Baths' },
+                          { icon: 'https://nlx-chatbot-image.s3.us-east-1.amazonaws.com/sqfeet.svg', value: cardData.sqft, label: 'SqFt' }
+                        ].map((item) => html`
+                          <div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                            <div style=${{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <img src="${item.icon}" alt="${item.label}" style=${{ width: '16px', height: '16px' }} />                              <span style=${{ fontWeight: 'bold' }}>${item.label === 'SqFt' ? formatNumber(item.value) : item.value}</span>
+                            </div>
+                            <span style=${{ fontSize: '0.8em', color: 'grey' }}>${item.label}</span>
+                          </div>
+                        `)}
+                      </div>
+                    </BaseText>
+                  `}
+                />
+               `}
+              </CustomCard>`
+            )}
+          </Carousel>`;
+        return carousel;
+      };
+
+      const touchpointOptions = {
+        config: {
+          applicationUrl: "https://bots.studio.nlx.ai/c/Y2GSZf8R70jiRvoTdDUwl/xiYOI-SDe8B4FOOzpav3m",
+          headers: {
+            "nlx-api-key": "IV=27MKXoib5b2yphpoGscPXfX9RbcdA"
+          },
+          languageCode: "en-US"
+        },
+        colorMode: "light", // or "dark"
+        theme: {
+          "fontFamily": '"proxima-nova", "ProximaNova", Arial, sans-serif',
+          "accent": "#002357", //light blue #AECAFF
+          //"background": "#FFFFFF", //white
+          "primary80": "#002357"
+        },
+        customModalities: { 
+          ZillowCarousel: CarouselExample,
+          Video: VideoExample
+        },
+        brandIcon: "https://nlx-chatbot-image.s3.us-east-1.amazonaws.com/tricon-launch-logo.svg",
+        launchIcon: "https://nlx-chatbot-image.s3.us-east-1.amazonaws.com/tcn-chat-icon-nlx-v25.png",
+        agentMessageBubble: true,
+        userMessageBubble: true,
+        chatMode: true
+      };
+
+      // Create the touchpoint using the options
+      const touchpoint = await create(touchpointOptions);
+      const convo = touchpoint.conversationHandler;
+      function onExpand(convoHandler) {
+        var checkMessages = function checkMessages(messages) {
+              if (messages.length === 0) {
+                convo.sendWelcomeIntent();
+              }
+              convo.unsubscribe(checkMessages);
+            };
+            convo.subscribe(checkMessages);
+      };
+      setupGenesysEscalation(touchpoint);
+      // onExpand(convo);
+    })();
+  </script>
+</body>
+</html>
